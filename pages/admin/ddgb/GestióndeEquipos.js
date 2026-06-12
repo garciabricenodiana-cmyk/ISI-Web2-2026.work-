@@ -1,82 +1,43 @@
-// CRUD de Equipos
+import TeamsService from "../../../shared/services/teams.service.js";
+import TeamRequest from "../../../shared/models/request/team.request.js";
 
-//URL DE EJEMPLO
-var API_URL = "https://localhost:7001/api";
-var miToken = "";
+const teamsService = new TeamsService();
+
 var equipoEditandoId = null;
 
-// LOGIN
-function iniciarSesion() {
-  var email = document.getElementById("campo-email").value.trim();
-  var pass = document.getElementById("campo-password").value;
+cargarEquipos();
 
-  fetch(API_URL + "/authentication/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email, password: pass })
-  })
-  .then(function(res) {
-    if (!res.ok) throw new Error("Credenciales incorrectas");
-    return res.json();
-  })
-  .then(function(data) {
-    miToken = data.token || data.accessToken || "";
-    document.getElementById("estado-sesion").textContent = "Sesión iniciada: " + email;
-    document.getElementById("lista-equipos").style.display = "block";
-    cargarEquipos();
-  })
-  .catch(function(err) {
-    document.getElementById("estado-sesion").textContent = "Error: " + err.message;
-  });
-}
-
-// LISTAR
-function cargarEquipos() {
-  fetch(API_URL + "/teams", {
-    headers: { "Authorization": "Bearer " + miToken }
-  })
-  .then(function(res) {
-    if (!res.ok) throw new Error("No se pudieron cargar los equipos");
-    return res.json();
-  })
-  .then(function(equipos) {
+async function cargarEquipos() {
+  try {
+    const equipos = await teamsService.get();
     mostrarTabla(equipos);
-  })
-  .catch(function(err) {
-    document.getElementById("msg-equipos").textContent = "Error: " + err.message;
-  });
+  } catch (e) {
+    document.getElementById("msg-equipos").textContent = "Error: " + e.message;
+  }
 }
 
 function mostrarTabla(equipos) {
-  var contenedor = document.getElementById("contenedor-tabla");
+  const tbody = document.getElementById("tabla-body");
 
   if (equipos.length === 0) {
-    contenedor.innerHTML = "<p>No hay equipos.</p>";
+    tbody.innerHTML = `<tr><td colspan= "5">No  hay Equipos</td></tr>`;
     return;
   }
 
-  var html = "<table border='1' cellpadding='5'>";
-  html += "<tr><th>ID</th><th>Nombre</th><th>Descripción</th><th>Miembros</th><th>Acciones</th></tr>";
-
-  for (var i = 0; i < equipos.length; i++) {
-    var eq = equipos[i];
-    html += "<tr>";
-    html += "<td>" + eq.id + "</td>";
-    html += "<td>" + (eq.name || "") + "</td>";
-    html += "<td>" + (eq.description || "") + "</td>";
-    html += "<td>" + (eq.memberCount || 0) + "</td>";
-    html += "<td>";
-    html += "<button onclick='abrirFormularioEditar(" + eq.id + ", \"" + (eq.name || "").replace(/"/g, "") + "\", \"" + (eq.description || "").replace(/"/g, "") + "\")'>Editar</button> ";
-    html += "<button onclick='eliminarEquipo(" + eq.id + ")'>Eliminar</button>";
-    html += "</td>";
-    html += "</tr>";
-  }
-
-  html += "</table>";
-  contenedor.innerHTML = html;
+  tbody.innerHTML = equipos.map(eq => `
+    <tr>
+      <td>${eq.id}</td>
+      <td>${eq.name}</td>
+      <td>${eq.description || ""}</td>
+      <td>${eq.memberCount}</td>
+      <td>
+        <button onclick="abrirFormularioEditar(${eq.id}, '${(eq.name || "").replace(/'/g, "")}', '${(eq.description || "").replace(/'/g, "")}')">Editar</button>
+        <button onclick="eliminarEquipo(${eq.id})">Eliminar</button>
+      </td>
+    </tr>
+  `).join("");
 }
 
-// FORMULARIO
 function abrirFormularioNuevo() {
   equipoEditandoId = null;
   document.getElementById("titulo-form").textContent = "Nuevo Equipo";
@@ -102,61 +63,50 @@ function cerrarFormulario() {
   equipoEditandoId = null;
 }
 
-// CREAR / EDITAR
-function guardarEquipo() {
-  var nombre = document.getElementById("campo-nombre").value.trim();
-  var descripcion = document.getElementById("campo-descripcion").value.trim();
+async function guardarEquipo() {
+  const nombre = document.getElementById("campo-nombre").value.trim();
+  const descripcion = document.getElementById("campo-descripcion").value.trim();
 
   if (!nombre) {
     document.getElementById("msg-form").textContent = "El nombre es obligatorio.";
     return;
   }
 
-  var datos = { name: nombre, description: descripcion };
+  // Usamos el modelo TeamRequest para armar el cuerpo de la petición
+  const request = new TeamRequest(nombre, descripcion);
 
-  // Decidimos si es POST (crear) o PUT (editar)
-  var url = equipoEditandoId === null
-    ? API_URL + "/teams"
-    : API_URL + "/teams/" + equipoEditandoId;
-
-  var metodo = equipoEditandoId === null ? "POST" : "PUT";
-
-  fetch(url, {
-    method: metodo,
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + miToken
-    },
-    body: JSON.stringify(datos)
-  })
-  .then(function(res) {
-    if (!res.ok) throw new Error("Error al guardar el equipo");
-    return res.json();
-  })
-  .then(function() {
+  try {
+    if (equipoEditandoId === null) {
+      // CREATE: el servicio encapsula el POST (obs. 2 y 4)
+      await teamsService.create(request);
+    } else {
+      // UPDATE: el servicio encapsula el PUT
+      await teamsService.put(`/teams/${equipoEditandoId}`, request.toJson());
+    }
     document.getElementById("msg-form").textContent = "Guardado correctamente.";
     cerrarFormulario();
     cargarEquipos();
-  })
-  .catch(function(err) {
-    document.getElementById("msg-form").textContent = "Error: " + err.message;
-  });
+  } catch (e) {
+    document.getElementById("msg-form").textContent = "Error: " + e.message;
+  }
 }
 
-// ELIMINAR
-function eliminarEquipo(id) {
+async function eliminarEquipo(id) {
   if (!confirm("¿Eliminar este equipo?")) return;
 
-  fetch(API_URL + "/teams/" + id, {
-    method: "DELETE",
-    headers: { "Authorization": "Bearer " + miToken }
-  })
-  .then(function(res) {
-    if (!res.ok) throw new Error("No se pudo eliminar");
+  try {
+    // El servicio encapsula el DELETE (obs. 4)
+    await teamsService.delete(`/teams/${id}`);
     document.getElementById("msg-equipos").textContent = "Equipo eliminado.";
     cargarEquipos();
-  })
-  .catch(function(err) {
-    document.getElementById("msg-equipos").textContent = "Error: " + err.message;
-  });
+  } catch (e) {
+    document.getElementById("msg-equipos").textContent = "Error: " + e.message;
+  }
 }
+
+window.abrirFormularioNuevo = abrirFormularioNuevo;
+window.abrirFormularioEditar = abrirFormularioEditar;
+window.cerrarFormulario = cerrarFormulario;
+window.guardarEquipo = guardarEquipo;
+window.eliminarEquipo = eliminarEquipo;
+window.cargarEquipos = cargarEquipos;
